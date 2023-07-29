@@ -10,8 +10,8 @@
 
 typedef struct {
     char name[20];
-    char path[201];
-    void* handle;
+    char path[201]; // not necessary if the plugins are in the same directory as the shell, so I can clean up the things that use this
+    int (*run)(char**);
 } Plugin;
 
 Plugin plugins[MAX_PLUGINS]; // array to store plugins
@@ -19,10 +19,9 @@ int plugin_count = 0; // int to hold the current number of plugins stored - also
 
 void parse_input(char* input);
 void load_plugin(char* plugin_name);
-void add_plugin(char* plugin_name, char* plugin_path, void* handle);
+void add_plugin(char* plugin_name, char* plugin_path, int (*run)(char**));
 char* find_plugin_path(char* plugin_name);
-void* find_plugin_handle(char* plugin_name);
-int execute_plugin(char* plugin_name, char* plugin_path, void* handle, char** args);
+int execute_plugin(char* plugin_name, char** args);
 void fork_exec(char** arguments);
 
 int main(void) {
@@ -74,9 +73,8 @@ void parse_input(char* input) {
     } else { // if the command isnt built in
         // check if its a loaded plugin
         char* plugin_path = find_plugin_path(arguments[0]);
-        void* handle = find_plugin_handle(arguments[0]);
         if (plugin_path != NULL) { // if it is, execute it
-            execute_plugin(arguments[0], plugin_path, handle, arguments);
+            execute_plugin(arguments[0], arguments);
         } else { // if its not, fork and exec
             fork_exec(arguments);
         }
@@ -99,17 +97,30 @@ void load_plugin(char* plugin_name) {
     void* handle = dlopen(plugin_filename, RTLD_LAZY);
     if (!handle) {
         fprintf(stderr, "%s\n", dlerror());
+        return;
     }
 
     // load the plugin's intitialize function
-    static int (*initialize)();
+    int (*initialize)();
     initialize = dlsym(handle, "initialize");
 
     // check if initialize failed to load
-    char* error = NULL;
-    error = dlerror();
-    if (error) {
-        fprintf(stderr, "%s\n", error);
+    char* init_error = dlerror();
+    if (init_error) {
+        fprintf(stderr, "%s\n", init_error);
+        dlclose(handle);
+        return;
+    }
+
+    // load the plugin's run function
+    int (*run)(char**);
+    run = dlsym(handle, "run");
+
+    // check if run failed to load
+    char* run_error = dlerror();
+    if (run_error) {
+        fprintf(stderr, "%s\n", run_error);
+        dlclose(handle);
         return;
     }
 
@@ -122,13 +133,14 @@ void load_plugin(char* plugin_name) {
         return;
     }
     printf("initialization successful!\n");
-    add_plugin(plugin_name, plugin_filename, handle);
 
-    // close the plugin
+    add_plugin(plugin_name, plugin_filename, run);
+
+    // close the plugin handle
     //dlclose(handle); // maybe this shouldn't be here since it potentially unloads the library and I want it to stay initialized and ready to run run() from the plugins array
 }
 
-void add_plugin(char* plugin_name, char* plugin_path, void* handle) {
+void add_plugin(char* plugin_name, char* plugin_path, int (*run)(char**)) {
     if (plugin_count >= MAX_PLUGINS) {
         printf("Error: Maximum number of plugins reached!\n");
         return;
@@ -136,7 +148,7 @@ void add_plugin(char* plugin_name, char* plugin_path, void* handle) {
 
     strcpy(plugins[plugin_count].name, plugin_name);
     strcpy(plugins[plugin_count].path, plugin_path);
-    plugins[plugin_count].handle = handle;
+    plugins[plugin_count].run = run;
     plugin_count++;
 }
 
@@ -149,41 +161,26 @@ char* find_plugin_path(char* plugin_name) {
     return NULL;
 }
 
-void* find_plugin_handle(char* plugin_name) {
+int find_plugin_index(char* plugin_name) {
     for (int i = 0; i < plugin_count; i++) {
         if (strcmp(plugins[i].name, plugin_name) == 0) {
-            return plugins[i].handle;
+            return i;
         }
     }
-    return NULL;
+    return -1;
 }
 
-int execute_plugin(char* plugin_name, char* plugin_path, void* handle, char** argv) {
-    // construct the plugin filename/path
-    //char plugin_filename[256];
-    //snprintf(plugin_filename, sizeof(plugin_filename), "./%s.so", plugin_name);
 
-    // or 
-
-    // clear any potential previous errors
-    dlerror();
-
-    // load the plugin's run function
-    static int (*run)(char** a);
-    run = dlsym(handle, "run");
-
-    // check for any errors loading run
-    char* error = NULL;
-    if (error) {
-        fprintf(stderr, "%s\n", error);
-        return 1;
+int execute_plugin(char* plugin_name, char** argv) {
+    // get the index of the plugin
+    int plugin_index = find_plugin_index(plugin_name);
+    if (plugin_index < 0) { // if plugin not in plugins array (isn't loaded)
+        return 0;
     }
 
-    // call run
-    int run_result = run(argv);
-
-
-    return 0;
+    // call run function of the plugin
+    int run_result = plugins[plugin_index].run(argv);
+    return run_result;
 }
 
 void fork_exec(char** arguments) {
