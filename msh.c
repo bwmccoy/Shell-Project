@@ -3,6 +3,8 @@
 #include <dlfcn.h>
 #include <string.h>
 #include <stdbool.h>
+#include <unistd.h>
+#include <sys/types.h>
 
 #define MAX_INPUT 201 // 201 instead of 200 since fgets() adds a newline char at end of input (which I replace with null terminator for strtok()) for corner case where input is the max length of 200
 #define MAX_ARGS 20
@@ -183,8 +185,21 @@ int execute_plugin(char* plugin_name, char** argv) {
     return run_result;
 }
 
-void fork_exec(char** arguments) {
+void fork_exec(char** argv) {
+    pid_t pid = fork();
+    if (pid == 0) { // child process
+        // exec the command
+        if (execvp(argv[0], argv) < 0) { // check if theres an error from execvp (returns -1 if error and nothing if successful)
+            printf("Error: exec failed!\n");
+            exit(1); // exit with a 1 to indicate error to parent
+        }
 
+    } else if (pid > 0){ // parent process
+        wait(NULL);
+    } else { // error forking since pid < 0
+        fprintf(stderr, "Error forking!\n");
+        //exit(1); // exit with a 1 to indicate error <- will exit the shell since fork failed
+    }
 }
 
 
