@@ -24,6 +24,7 @@ void load_plugin(char* plugin_name);
 void add_plugin(char* plugin_name, char* plugin_path, int (*run)(char**));
 char* find_plugin_path(char* plugin_name);
 int execute_plugin(char* plugin_name, char** args);
+bool starts_with(const char* a, const char* b);
 void fork_exec(char** arguments);
 
 int main(void) {
@@ -77,8 +78,10 @@ void parse_input(char* input) {
         char* plugin_path = find_plugin_path(arguments[0]);
         if (plugin_path != NULL) { // if it is, execute it
             execute_plugin(arguments[0], arguments);
-        } else { // if its not, fork and exec
+        } else if (starts_with(arguments[0], "./")) { // if its not, check if its an executable
             fork_exec(arguments);
+        } else { // if its not a loaded plugin or executable
+            return;
         }
         
     } 
@@ -200,6 +203,13 @@ void fork_exec(char** argv) {
         fprintf(stderr, "Error forking!\n");
         //exit(1); // exit with a 1 to indicate error <- will exit the shell since fork failed
     }
+}
+
+bool starts_with(const char* a, const char* b) {
+    if (strncmp(a, b, strlen(b)) == 0) {
+        return true;
+    }
+    return false;
 }
 
 
