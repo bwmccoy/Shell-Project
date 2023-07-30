@@ -12,7 +12,6 @@
 
 typedef struct {
     char name[20];
-    char path[201]; // not necessary if the plugins are in the same directory as the shell, so I can clean up the things that use this
     int (*run)(char**);
 } Plugin;
 
@@ -21,8 +20,8 @@ int plugin_count = 0; // int to hold the current number of plugins stored - also
 
 void parse_input(char* input);
 void load_plugin(char* plugin_name);
-void add_plugin(char* plugin_name, char* plugin_path, int (*run)(char**));
-char* find_plugin_path(char* plugin_name);
+void add_plugin(char* plugin_name, int (*run)(char**));
+int find_plugin_index(char* plugin_name);
 int execute_plugin(char* plugin_name, char** args);
 bool starts_with(const char* a, const char* b);
 void fork_exec(char** arguments);
@@ -75,8 +74,7 @@ void parse_input(char* input) {
         load_plugin(arguments[1]);
     } else { // if the command isnt built in
         // check if its a loaded plugin
-        char* plugin_path = find_plugin_path(arguments[0]);
-        if (plugin_path != NULL) { // if it is, execute it
+        if (find_plugin_index(arguments[0]) >= 0) { // if it is, execute it
             execute_plugin(arguments[0], arguments);
         } else if (starts_with(arguments[0], "./")) { // if its not, check if its an executable
             fork_exec(arguments);
@@ -89,7 +87,7 @@ void parse_input(char* input) {
 
 void load_plugin(char* plugin_name) {
     // checking if the plugin is already loaded
-    if (find_plugin_path(plugin_name) != NULL)  {
+    if (find_plugin_index(plugin_name) > 0)  {
         printf("Error: Plugin %s is already loaded!\n", plugin_name);
         return;
     }
@@ -139,31 +137,21 @@ void load_plugin(char* plugin_name) {
     }
     printf("initialization successful!\n");
 
-    add_plugin(plugin_name, plugin_filename, run);
+    add_plugin(plugin_name, run);
 
     // close the plugin handle
     //dlclose(handle); // maybe this shouldn't be here since it potentially unloads the library and I want it to stay initialized and ready to run run() from the plugins array
 }
 
-void add_plugin(char* plugin_name, char* plugin_path, int (*run)(char**)) {
+void add_plugin(char* plugin_name, int (*run)(char**)) {
     if (plugin_count >= MAX_PLUGINS) {
         printf("Error: Maximum number of plugins reached!\n");
         return;
     }
 
     strcpy(plugins[plugin_count].name, plugin_name);
-    strcpy(plugins[plugin_count].path, plugin_path);
     plugins[plugin_count].run = run;
     plugin_count++;
-}
-
-char* find_plugin_path(char* plugin_name) {
-    for (int i = 0; i < plugin_count; i++) {
-        if (strcmp(plugins[i].name, plugin_name) == 0) {
-            return plugins[i].path;
-        }
-    }
-    return NULL;
 }
 
 int find_plugin_index(char* plugin_name) {
@@ -174,7 +162,6 @@ int find_plugin_index(char* plugin_name) {
     }
     return -1;
 }
-
 
 int execute_plugin(char* plugin_name, char** argv) {
     // get the index of the plugin
@@ -211,9 +198,3 @@ bool starts_with(const char* a, const char* b) {
     }
     return false;
 }
-
-
-// check if the command is built in using strcmp() to exit or load
-// if it is, execute that command - exit will just exit and load will load the plugin
-// if its not, check if its a valid loaded plugin and execute it if it is
-// if its not a plugin, its likely an executable so fork and exec that program
