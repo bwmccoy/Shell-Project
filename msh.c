@@ -16,15 +16,14 @@ typedef struct {
 } Plugin;
 
 Plugin plugins[MAX_PLUGINS]; // array to store plugins
-int plugin_count = 0; // int to hold the current number of plugins stored - also tells where to add a plugin in the plugins array
+int plugin_count = 0; // counter to hold the current number of plugins stored - also tells where to add a plugin in the plugins array
 
 void parse_input(char* input);
 void load_plugin(char* plugin_name);
 void add_plugin(char* plugin_name, int (*run)(char**));
 int find_plugin_index(char* plugin_name);
 int execute_plugin(char* plugin_name, char** args);
-bool starts_with(const char* a, const char* b);
-void fork_exec(char** arguments);
+int fork_exec(char** arguments);
 
 int main(void) {
     // array to hold the user input
@@ -35,8 +34,15 @@ int main(void) {
         printf("> ");
         fgets(input, sizeof(input), stdin); // only getting the first 200 chars of input to avoid buffer overflow
 
+        // checking if user input exceeds maximum input size
+        int input_length = strcspn(input, "\n");
+        if (input_length >= 200) {
+            continue;
+        }
+
         // removing newline char at end of input and replacing it with null terminator to denote end of string
-        input[strcspn(input, "\n")] = '\0';
+        input[input_length] = '\0';
+
 
         // parsing and executing the input
         parse_input(input);
@@ -60,35 +66,45 @@ void parse_input(char* input) {
         tokenized = strtok(NULL, " ");
         i++;
     }
-    arguments[i] = NULL;
+
+    // check if maximum allowed arguments was exceeded
+    if (i < MAX_ARGS) {
+        arguments[i] = NULL;
+    } else {
+        return;
+    }
+
+    // check if the length of any arguments exceedes the max allowed length
+    for (int j = 0; j < i; j++) {
+        if (strlen(arguments[j]) >= 20) {
+            return;
+        }
+    }
+    
 
     // executing
     if (strcmp(arguments[0], "exit") == 0) { // if the command is exit
+        unload_plugins();
         exit(0);
     } else if (strcmp(arguments[0], "load") == 0) { // if the command is load
         if (arguments[1] == NULL) { // making sure the plugin is present
-            printf("Error: plugin name not specified\n");
+            printf("Error: Plugin %s initialization failed!\n", arguments[1]);
             return;
         }
         // loading the plugin
         load_plugin(arguments[1]);
-    } else { // if the command isnt built in
-        // check if its a loaded plugin
-        if (find_plugin_index(arguments[0]) >= 0) { // if it is, execute it
-            execute_plugin(arguments[0], arguments);
-        } else if (starts_with(arguments[0], "./")) { // if its not, check if its an executable
-            fork_exec(arguments);
-        } else { // if its not a loaded plugin or executable
-            return;
-        }
-        
-    } 
+    } else if (fork_exec(arguments) != 0 && find_plugin_index(arguments[0]) >= 0) { // try to run it as an executable, if its not, check if its a loaded plugin 
+        // if its a loaded plugin
+        execute_plugin(arguments[0], arguments);
+    } else {
+        return;
+    }
 }
 
 void load_plugin(char* plugin_name) {
     // checking if the plugin is already loaded
-    if (find_plugin_index(plugin_name) > 0)  {
-        printf("Error: Plugin %s is already loaded!\n", plugin_name);
+    if (find_plugin_index(plugin_name) >= 0)  {
+        printf("Error: Plugin %s initialization failed!\n", plugin_name);
         return;
     }
 
@@ -99,7 +115,7 @@ void load_plugin(char* plugin_name) {
     // load the shared object
     void* handle = dlopen(plugin_filename, RTLD_LAZY);
     if (!handle) {
-        fprintf(stderr, "%s\n", dlerror());
+        fprintf(stderr, "Error: Plugin %s initialization failed!\n", plugin_name); 
         return;
     }
 
@@ -133,14 +149,11 @@ void load_plugin(char* plugin_name) {
     // check if initialize was successful
     if (init_result != 0) {
         fprintf(stderr, "Error: Plugin %s initialization failed!\n", plugin_name);
+        dlclose(handle);
         return;
     }
-    printf("initialization successful!\n");
 
     add_plugin(plugin_name, run);
-
-    // close the plugin handle
-    //dlclose(handle); // maybe this shouldn't be here since it potentially unloads the library and I want it to stay initialized and ready to run run() from the plugins array
 }
 
 void add_plugin(char* plugin_name, int (*run)(char**)) {
@@ -175,26 +188,21 @@ int execute_plugin(char* plugin_name, char** argv) {
     return run_result;
 }
 
-void fork_exec(char** argv) {
+int fork_exec(char** argv) {
     pid_t pid = fork();
+    int status = 0;
     if (pid == 0) { // child process
         // exec the command
         if (execvp(argv[0], argv) < 0) { // check if theres an error from execvp (returns -1 if error and nothing if successful)
-            printf("Error: exec failed!\n");
+            //printf("Error: exec failed!\n");
             exit(1); // exit with a 1 to indicate error to parent
         }
 
     } else if (pid > 0){ // parent process
-        wait(NULL);
+        wait(&status);
     } else { // error forking since pid < 0
         fprintf(stderr, "Error forking!\n");
-        //exit(1); // exit with a 1 to indicate error <- will exit the shell since fork failed
     }
+    return status;
 }
 
-bool starts_with(const char* a, const char* b) {
-    if (strncmp(a, b, strlen(b)) == 0) {
-        return true;
-    }
-    return false;
-}
